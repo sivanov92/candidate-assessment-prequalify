@@ -1,0 +1,9 @@
+{
+  "name": "candidate-assessment-prequalify",
+  "version": "1.0.0",
+  "description": "Showcase project for AWS Serverless stack",
+  "main": "index.js",
+  "scripts": {},
+  "author": "Stanislav Ivanov",
+  "license": "MIT"
+}
