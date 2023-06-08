@@ -12,13 +12,24 @@ export class StateMachineStack extends Stack {
     private readonly POSITION_BUDGET_UPPER_LIMIT = 10000;
     private readonly POSITION_BUDGET_LOWER_LIMIT = 5000;
 
+    private readonly POSITION_REQUIRED_EXPERIENCE = 5;
+    
     constructor(scope, id, props) {
         super(scope, id, props);
 
         const fail = new Fail(this, "Fail", {
             cause: "Candidate does not meet requirements",
         });
-        const succeed = new Succeed(this, "Successful Candidate");
+
+        /**
+         * This Lambda will be used to check if the candidate's expected salary is within the budget
+         * If the candidate's expected salary is within the budget, the state machine will proceed to the next state
+         * And calculate a simple score based on the candidate's profile
+         * Otherwise, the state machine will fail
+         */
+        const succeed = new Succeed(this, "Successful Candidate", {
+            outputPath: "$.score"
+        });
 
         /**
          * The state machine will be triggered by API Gateway
@@ -30,98 +41,43 @@ export class StateMachineStack extends Stack {
             resultPath: "$.payload",
         });
 
-        const transformExperienceData = this.createExperienceDataResolverLambda();
-        const certificationsDataResolver = this.createCertificationsDataResolverLambda();
-        const languageDataResolver = this.createLanguageDataResolverLambda();
+        const parseProfileData = this.createProfileParseLambda();
 
         const experienceCheckChoiceState =new Choice(this, "ExperienceCheckChoiceState")
-            .when(Condition.numberLessThan("$.experience", 5), fail);
+            .when(Condition.numberLessThan("$.experience", this.POSITION_REQUIRED_EXPERIENCE), fail);
         const languageCheckChoiceState = new Choice(this, "LanguageCheckChoiceState")
-            .when(Condition.stringEquals("$.english", "yes"), checkExpectedSalaryLambdaInvoke)
+            .when(Condition.booleanEquals("$.english", true), succeed)
             .otherwise(fail);
 
-        const certificationsPassState = new Pass(this, "CertificationsPassState", {
-            comment: "Check certifications",
-            resultPath: "$.payload",
-        });
 
         const candidateAssessmentDefinition =
              initialState
-            .next(transformExperienceData)
+            .next(parseProfileData)
             .next(experienceCheckChoiceState)
-
-            .next(languageDataResolver)
             .next(languageCheckChoiceState)
-
-            .next(certificationsDataResolver)
-            .next(certificationsPassState) //TODO Change to choice state
-
-            //SEND and wait for SNS notification
-
             .next(succeed);
 
         const stateMachine = new StateMachine(this, "CandidateAssessmentStateMachine", {
             definition: candidateAssessmentDefinition,
-            timeout: Duration.minutes(5),
+            timeout: Duration.minutes(1),
         });
     }
 
     /**
-     * This method is used to create the increaseCandidateScoreLambda
-     * The Lambda will be used to perform profile parsing and validation
-     * Additionally, certifications will be calculated per technology
+     * This method is used to parse the candidate profile
+     * into a format that can be used by the state machine
      *
      * @protected
      */
-    protected createCertificationsDataResolverLambda(): LambdaInvoke {
-        const certificationsDataResolverLambda = new Function(this, "CertificationsDataResolverLambda", {
-            description: "Transform incoming candidate profile to the expected format regarding certifications",
-            handler: "src/lambda/increase-candidate-score.handler",
+    protected createProfileParseLambda(): LambdaInvoke {
+        const profileParseLambda = new Function(this, "ProfileParseLambda", {
+            description: "This Lambda will be used to parse the candidate's profile",
+            handler: "src/lambda/parse-profile.handler",
             runtime: this.LAMBDA_RUNTIME,
         });
 
-        return new LambdaInvoke(this, "CertificationsDataResolverLambdaInvoke", {
-            lambdaFunction: certificationsDataResolverLambda,
-            outputPath: "$.payload",
-        });
-    }
-
-    /**
-     * This method is used to create the experienceCheckLambda
-     * The Lambda will be used to perform profile parsing and validation
-     * Additionally, experience will be calculated per technology
-     *
-     * @protected
-     */
-    protected createExperienceDataResolverLambda(): LambdaInvoke {
-        const experienceDataResolverLambda = new Function(this, "ExperienceDataResolverLambda", {
-            description: "Transform incoming candidate profile to the expected format regarding experience",
-            handler: "src/lambda/experience-check.handler",
-            runtime: this.LAMBDA_RUNTIME,
-        });
-
-        return new LambdaInvoke(this, "ExperienceDataResolverLambdaInvoke", {
-            lambdaFunction: experienceDataResolverLambda,
-            outputPath: "$.payload",
-        });
-    }
-
-    /**
-     * This method is used to create the languageDataResolverLambda
-     * The Lambda will be used to perform profile parsing and validation
-     * Additionally, spoken languages data will be calculated
-     *
-     * @protected
-     */
-    protected createLanguageDataResolverLambda(): LambdaInvoke {
-        const languageDataResolverLambda = new Function(this, "LanguageDataResolverLambda", {
-            description: "Transform incoming candidate profile to the expected format regarding experience",
-            handler: "src/lambda/language-check.handler",
-            runtime: this.LAMBDA_RUNTIME,
-        });
-
-        return new LambdaInvoke(this, "LanguageDataResolverLambdaInvoke", {
-            lambdaFunction: languageDataResolverLambda,
+        return new LambdaInvoke(this, "ProfileParseLambdaInvoke", {
+            lambdaFunction: profileParseLambda,
             outputPath: "$.payload",
         });
     }
